@@ -112,7 +112,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$RUNNER_DIR
 ExecStart=$RUNNER_DIR/run.sh
-Restart=on-failure
+Restart=always
 RestartSec=10
 KillMode=process
 
