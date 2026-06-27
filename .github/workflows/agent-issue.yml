@@ -5,7 +5,7 @@ on:
     inputs:
       issue_number:
         required: true
-        type: number
+        type: string
       issue_title:
         required: true
         type: string
@@ -35,13 +35,12 @@ on:
         type: string
         default: "agent-coder@agents.bot"
 
-concurrency:
-  group: agent-issue-${{ inputs.issue_number }}
-  cancel-in-progress: false
-
 jobs:
   run-agent:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    concurrency:
+      group: agent-issue-${{ inputs.issue_number }}
+      cancel-in-progress: false
     timeout-minutes: 60
     permissions:
       contents: write
