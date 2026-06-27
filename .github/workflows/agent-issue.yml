@@ -9,11 +9,11 @@ on:
       issue_title:
         required: true
         type: string
-      runner_label:
-        description: "Self-hosted runner label to target (e.g. ibkr, prod)"
+      runner_labels:
+        description: 'JSON array of runner labels, e.g. ["self-hosted","linux","ibkr"]'
         required: false
         type: string
-        default: "linux"
+        default: '["self-hosted","linux"]'
       build_check_cmd:
         description: "Command to verify 0 warnings/errors (run inside worktree)"
         required: false
@@ -48,7 +48,7 @@ concurrency:
 
 jobs:
   run-agent:
-    runs-on: [self-hosted, linux, "${{ inputs.runner_label }}"]
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 60
     permissions:
       contents: write

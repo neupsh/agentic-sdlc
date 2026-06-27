@@ -191,7 +191,7 @@ jobs:
     with:
       issue_number: \${{ github.event.issue.number }}
       issue_title:  \${{ github.event.issue.title }}
-      runner_label: "${label}"
+      runner_labels: "["self-hosted","linux","${label}"]"
       # build_check_cmd: ""   # override here or use .agentic/conventions.md
       # build_test_cmd:  ""
     secrets:
