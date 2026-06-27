@@ -105,6 +105,40 @@ jobs:
           fi
           git worktree add "$WORKTREE" -b "$BRANCH" HEAD
 
+      - name: Resolve issue type and model
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LABELS=$(gh issue view "$ISSUE_NUMBER" --json labels -q '[.labels[].name] | join(" ")' --repo "$REPO")
+
+          # Determine ISSUE_TYPE
+          if echo "$LABELS" | grep -qw "type:initiative"; then
+            ISSUE_TYPE=initiative
+            TYPE_MODEL=claude-opus-4-8
+          elif echo "$LABELS" | grep -qw "type:epic"; then
+            ISSUE_TYPE=epic
+            TYPE_MODEL=claude-opus-4-8
+          elif echo "$LABELS" | grep -qw "type:bug"; then
+            ISSUE_TYPE=bug
+            TYPE_MODEL="$MODEL"
+          else
+            ISSUE_TYPE=story
+            TYPE_MODEL="$MODEL"
+          fi
+
+          # Determine EFFECTIVE_MODEL (model label overrides type default)
+          if echo "$LABELS" | grep -qw "model:opus"; then
+            EFFECTIVE_MODEL=claude-opus-4-8
+          elif echo "$LABELS" | grep -qw "model:sonnet"; then
+            EFFECTIVE_MODEL=claude-sonnet-4-6
+          else
+            EFFECTIVE_MODEL="$TYPE_MODEL"
+          fi
+
+          echo "ISSUE_TYPE=$ISSUE_TYPE" >> "$GITHUB_ENV"
+          echo "MODEL=$EFFECTIVE_MODEL" >> "$GITHUB_ENV"
+          echo "Resolved: type=$ISSUE_TYPE model=$EFFECTIVE_MODEL"
+
       - name: Mark issue in-progress
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -114,7 +148,7 @@ jobs:
             --add-label "agent-coding" \
             --repo "$REPO"
           gh issue comment "$ISSUE_NUMBER" \
-            --body "Agent Coder started on \`$BRANCH\` — $(date -u '+%Y-%m-%d %H:%M UTC') · model: \`$MODEL\`" \
+            --body "Agent Coder started on \`$BRANCH\` — $(date -u '+%Y-%m-%d %H:%M UTC') · type: \`$ISSUE_TYPE\` · model: \`$MODEL\`" \
             --repo "$REPO"
 
       - name: Fetch full issue body
@@ -134,6 +168,7 @@ jobs:
           BUILD_TEST: ${{ inputs.build_test_cmd }}
           CONVENTIONS: ${{ inputs.project_conventions }}
           AGENT_EMAIL: ${{ inputs.agent_email }}
+          ISSUE_TYPE: ${{ env.ISSUE_TYPE }}
         run: bash .adlc/scripts/build-prompt.sh
 
       - name: Run agent
