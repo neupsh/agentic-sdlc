@@ -76,13 +76,17 @@ jobs:
         run: |
           git config user.name "Agent Coder"
           git config user.email "$AGENT_EMAIL"
+          # Use an isolated GNUPGHOME so we don't touch the user's gpg-agent
+          # (reloadagent on the user's agent would clear their passphrase cache)
+          GNUPGHOME="$(mktemp -d)"
+          export GNUPGHOME
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          chmod 700 "$GNUPGHOME"
+          echo "allow-loopback-pinentry" > "$GNUPGHOME/gpg-agent.conf"
           echo "$GPG_PRIVATE_KEY" | gpg --batch --import
           git config commit.gpgsign true
           git config user.signingkey "$GPG_KEY_ID"
-          mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
-          grep -qxF 'allow-loopback-pinentry' ~/.gnupg/gpg-agent.conf 2>/dev/null \
-            || echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
-          gpg-connect-agent reloadagent /bye 2>/dev/null || true
+          gpgconf --kill gpg-agent 2>/dev/null || true
           echo "$GPG_PASSPHRASE" | gpg --batch --yes \
             --pinentry-mode loopback --passphrase-fd 0 \
             --sign /dev/null 2>/dev/null || true
