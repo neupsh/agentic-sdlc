@@ -1,0 +1,19 @@
+name: Ping (Reusable Test)
+
+on:
+  workflow_call:
+    inputs:
+      message:
+        required: false
+        type: string
+        default: "pong"
+      runner_labels:
+        required: false
+        type: string
+        default: '["self-hosted","linux"]'
+
+jobs:
+  ping:
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    steps:
+      - run: echo "${{ inputs.message }}"
