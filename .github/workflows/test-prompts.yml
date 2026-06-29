@@ -1,0 +1,27 @@
+name: Prompt builder smoke test
+
+# Runs on GitHub-hosted runners (no secrets, no self-hosted runner needed).
+# Guards against the prompt builder silently failing for any issue type — see
+# scripts/test-prompts.sh.
+
+on:
+  push:
+    paths:
+      - scripts/build-prompt.sh
+      - scripts/prompts/**
+      - scripts/test-prompts.sh
+      - .github/workflows/test-prompts.yml
+  pull_request:
+    paths:
+      - scripts/build-prompt.sh
+      - scripts/prompts/**
+      - scripts/test-prompts.sh
+      - .github/workflows/test-prompts.yml
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build a prompt for every issue type and assert success
+        run: bash scripts/test-prompts.sh

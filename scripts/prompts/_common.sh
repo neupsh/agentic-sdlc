@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Writes the shared identity/conventions/build header to /tmp/agent-prompt.txt (overwrites).
-# Reads env vars: ISSUE_NUMBER, ISSUE_TYPE, BRANCH, AGENT_EMAIL,
+# Writes the shared identity/conventions/build header to $PROMPT_FILE (overwrites).
+# Reads env vars: PROMPT_FILE, ISSUE_NUMBER, ISSUE_TYPE, BRANCH, AGENT_EMAIL,
 #                 CONVENTIONS, BUILD_CHECK, BUILD_TEST
+# PROMPT_FILE is per-runner (RUNNER_TEMP) so concurrent jobs don't clobber it;
+# falls back to /tmp for standalone/local use.
 
 set -euo pipefail
 
-OUT=/tmp/agent-prompt.txt
+OUT="${PROMPT_FILE:-/tmp/agent-prompt.txt}"
 
 cat > "$OUT" << EOF
 You are an autonomous agent working on GitHub issue #${ISSUE_NUMBER} in the repository at the current working directory.
@@ -32,8 +34,13 @@ elif [ -f ".agentic/conventions.md" ]; then
   cat .agentic/conventions.md >> "$OUT"
 fi
 
-# Build commands
+# Build commands.
+# Use `if` blocks, NOT `[ cond ] && cmd`. A trailing short-circuit that evaluates
+# false returns exit 1; as the script's LAST command that becomes its exit status
+# and (under the caller's set -e) silently fails the whole dispatch with no output
+# — which is exactly how epic/story/initiative issues got marked agent-failed when
+# the consumer repo had no .agentic/build.sh.
 printf '\n## Build commands\n' >> "$OUT"
-[ -n "${BUILD_CHECK:-}" ] && printf 'Check: %s\n' "$BUILD_CHECK" >> "$OUT"
-[ -n "${BUILD_TEST:-}"  ] && printf 'Test:  %s\n' "$BUILD_TEST"  >> "$OUT"
-[ -f ".agentic/build.sh" ] && printf 'Or run: .agentic/build.sh check|test\n' >> "$OUT"
+if [ -n "${BUILD_CHECK:-}" ]; then printf 'Check: %s\n' "$BUILD_CHECK" >> "$OUT"; fi
+if [ -n "${BUILD_TEST:-}"  ]; then printf 'Test:  %s\n' "$BUILD_TEST"  >> "$OUT"; fi
+if [ -f ".agentic/build.sh" ]; then printf 'Or run: .agentic/build.sh check|test\n' >> "$OUT"; fi

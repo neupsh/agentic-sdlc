@@ -46,6 +46,11 @@ on:
 jobs:
   run-agent:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    # Per-issue mutual exclusion: the same issue never runs twice at once.
+    # Machine-wide concurrency (how many issues run in parallel) is capped by
+    # the number of self-hosted runner instances registered on the box — see
+    # install.sh --runners. GitHub queues jobs when all runners are busy, so
+    # excess tickets wait rather than being dropped.
     concurrency:
       group: agent-issue-${{ inputs.issue_number }}
       cancel-in-progress: false
@@ -55,11 +60,23 @@ jobs:
       ISSUE_NUMBER: ${{ inputs.issue_number }}
       ISSUE_TITLE: ${{ inputs.issue_title }}
       BRANCH: agent/issue-${{ inputs.issue_number }}
-      WORKTREE: /tmp/agent-worktrees/${{ inputs.issue_number }}
       REPO: ${{ github.repository }}
       MODEL: ${{ inputs.model }}
+      # WORKTREE / PROMPT_FILE / RUN_LOG are derived from RUNNER_TEMP in the first
+      # step below. They can't live here: the `runner` context is not available in
+      # a job-level env: block (only inside steps), and using it makes GitHub
+      # reject the whole workflow file.
 
     steps:
+      - name: Resolve per-runner temp paths
+        # RUNNER_TEMP is unique per runner instance and wiped each job, so the
+        # worktree, prompt file, and run log of concurrent jobs — even across repos
+        # sharing a machine — can never collide on shared /tmp.
+        run: |
+          echo "WORKTREE=$RUNNER_TEMP/agent-worktrees/$ISSUE_NUMBER" >> "$GITHUB_ENV"
+          echo "PROMPT_FILE=$RUNNER_TEMP/agent-prompt.txt" >> "$GITHUB_ENV"
+          echo "RUN_LOG=$RUNNER_TEMP/agent-run.log" >> "$GITHUB_ENV"
+
       - name: Checkout caller repo
         uses: actions/checkout@v4
         with:
@@ -99,10 +116,19 @@ jobs:
 
       - name: Create worktree
         run: |
-          mkdir -p /tmp/agent-worktrees
-          if git worktree list | grep -q "$WORKTREE"; then
-            git worktree remove "$WORKTREE" --force
-          fi
+          # Fully idempotent so a same-issue re-run (after a crash/cancel) on a
+          # runner that still holds stale worktree metadata or the local branch
+          # starts clean. RUNNER_TEMP is wiped between jobs but the persistent
+          # _work checkout keeps .git/worktrees/* and the agent/issue-<n> branch.
+          mkdir -p "$(dirname "$WORKTREE")"
+          git worktree remove "$WORKTREE" --force 2>/dev/null || true
+          git worktree prune
+          git branch -D "$BRANCH" 2>/dev/null || true
+          # Sync the remote-tracking ref if a prior run already pushed this
+          # branch (crash/cancel after push). The fresh branch starts from HEAD,
+          # so the agent's push diverges from origin; updating the tracking ref
+          # lets its `git push --force-with-lease` safely overwrite it.
+          git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" 2>/dev/null || true
           git worktree add "$WORKTREE" -b "$BRANCH" HEAD
 
       - name: Resolve issue type and model
@@ -169,7 +195,12 @@ jobs:
           CONVENTIONS: ${{ inputs.project_conventions }}
           AGENT_EMAIL: ${{ inputs.agent_email }}
           ISSUE_TYPE: ${{ env.ISSUE_TYPE }}
-        run: bash .adlc/scripts/build-prompt.sh
+        # Capture stdout+stderr to RUN_LOG so a prompt-builder failure shows up in
+        # the "Agent Coder failed" issue comment instead of "no log". pipefail
+        # makes the step exit non-zero if build-prompt.sh fails despite the tee.
+        run: |
+          set -o pipefail
+          bash .adlc/scripts/build-prompt.sh 2>&1 | tee "$RUN_LOG"
 
       - name: Run agent
         env:
@@ -177,10 +208,10 @@ jobs:
           GPG_TTY: /dev/tty
         working-directory: ${{ env.WORKTREE }}
         run: |
-          claude -p "$(cat /tmp/agent-prompt.txt)" \
+          claude -p "$(cat "$PROMPT_FILE")" \
             --model "$MODEL" \
             --dangerously-skip-permissions \
-            2>&1 | tee /tmp/agent-run-$ISSUE_NUMBER.log
+            2>&1 | tee "$RUN_LOG"
 
       - name: Post result to issue
         if: always()
@@ -211,7 +242,7 @@ jobs:
             gh issue edit "$ISSUE_NUMBER" \
               --remove-label "agent-coding" --add-label "agent-failed" \
               --repo "$REPO" 2>/dev/null || true
-            TAIL=$(tail -30 /tmp/agent-run-$ISSUE_NUMBER.log 2>/dev/null || echo "no log")
+            TAIL=$(tail -30 "$RUN_LOG" 2>/dev/null || echo "no log")
             gh issue comment "$ISSUE_NUMBER" \
               --body "Agent Coder failed -- no PR opened. Last output: $TAIL" \
               --repo "$REPO"
