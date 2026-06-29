@@ -34,8 +34,13 @@ elif [ -f ".agentic/conventions.md" ]; then
   cat .agentic/conventions.md >> "$OUT"
 fi
 
-# Build commands
+# Build commands.
+# Use `if` blocks, NOT `[ cond ] && cmd`. A trailing short-circuit that evaluates
+# false returns exit 1; as the script's LAST command that becomes its exit status
+# and (under the caller's set -e) silently fails the whole dispatch with no output
+# — which is exactly how epic/story/initiative issues got marked agent-failed when
+# the consumer repo had no .agentic/build.sh.
 printf '\n## Build commands\n' >> "$OUT"
-[ -n "${BUILD_CHECK:-}" ] && printf 'Check: %s\n' "$BUILD_CHECK" >> "$OUT"
-[ -n "${BUILD_TEST:-}"  ] && printf 'Test:  %s\n' "$BUILD_TEST"  >> "$OUT"
-[ -f ".agentic/build.sh" ] && printf 'Or run: .agentic/build.sh check|test\n' >> "$OUT"
+if [ -n "${BUILD_CHECK:-}" ]; then printf 'Check: %s\n' "$BUILD_CHECK" >> "$OUT"; fi
+if [ -n "${BUILD_TEST:-}"  ]; then printf 'Test:  %s\n' "$BUILD_TEST"  >> "$OUT"; fi
+if [ -f ".agentic/build.sh" ]; then printf 'Or run: .agentic/build.sh check|test\n' >> "$OUT"; fi

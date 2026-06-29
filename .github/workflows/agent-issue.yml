@@ -184,7 +184,12 @@ jobs:
           CONVENTIONS: ${{ inputs.project_conventions }}
           AGENT_EMAIL: ${{ inputs.agent_email }}
           ISSUE_TYPE: ${{ env.ISSUE_TYPE }}
-        run: bash .adlc/scripts/build-prompt.sh
+        # Capture stdout+stderr to RUN_LOG so a prompt-builder failure shows up in
+        # the "Agent Coder failed" issue comment instead of "no log". pipefail
+        # makes the step exit non-zero if build-prompt.sh fails despite the tee.
+        run: |
+          set -o pipefail
+          bash .adlc/scripts/build-prompt.sh 2>&1 | tee "$RUN_LOG"
 
       - name: Run agent
         env:
