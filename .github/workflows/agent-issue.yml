@@ -60,17 +60,23 @@ jobs:
       ISSUE_NUMBER: ${{ inputs.issue_number }}
       ISSUE_TITLE: ${{ inputs.issue_title }}
       BRANCH: agent/issue-${{ inputs.issue_number }}
-      # Everything transient lives under RUNNER_TEMP, which is unique per runner
-      # instance and wiped each job. With several runners sharing one machine,
-      # this guarantees the worktree, prompt file, and run log of concurrent
-      # jobs can never collide on shared /tmp.
-      WORKTREE: ${{ runner.temp }}/agent-worktrees/${{ inputs.issue_number }}
-      PROMPT_FILE: ${{ runner.temp }}/agent-prompt.txt
-      RUN_LOG: ${{ runner.temp }}/agent-run.log
       REPO: ${{ github.repository }}
       MODEL: ${{ inputs.model }}
+      # WORKTREE / PROMPT_FILE / RUN_LOG are derived from RUNNER_TEMP in the first
+      # step below. They can't live here: the `runner` context is not available in
+      # a job-level env: block (only inside steps), and using it makes GitHub
+      # reject the whole workflow file.
 
     steps:
+      - name: Resolve per-runner temp paths
+        # RUNNER_TEMP is unique per runner instance and wiped each job, so the
+        # worktree, prompt file, and run log of concurrent jobs — even across repos
+        # sharing a machine — can never collide on shared /tmp.
+        run: |
+          echo "WORKTREE=$RUNNER_TEMP/agent-worktrees/$ISSUE_NUMBER" >> "$GITHUB_ENV"
+          echo "PROMPT_FILE=$RUNNER_TEMP/agent-prompt.txt" >> "$GITHUB_ENV"
+          echo "RUN_LOG=$RUNNER_TEMP/agent-run.log" >> "$GITHUB_ENV"
+
       - name: Checkout caller repo
         uses: actions/checkout@v4
         with:
