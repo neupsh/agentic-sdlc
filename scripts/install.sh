@@ -21,26 +21,39 @@ REPO=""
 LABEL="linux"
 TOKEN=""
 INSTALL_SERVICE=false
+RUNNERS=1   # max agent jobs this repo runs concurrently on the machine; keep it
+            # low to leave headroom for other repos' runners on the same box
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --repo)    REPO="$2";  shift 2 ;;
-    --label)   LABEL="$2"; shift 2 ;;
-    --token)   TOKEN="$2"; shift 2 ;;
+    --repo)    REPO="$2";    shift 2 ;;
+    --label)   LABEL="$2";   shift 2 ;;
+    --token)   TOKEN="$2";   shift 2 ;;
+    --runners) RUNNERS="$2"; shift 2 ;;
     --service) INSTALL_SERVICE=true; shift ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
 
 if [[ -z "$REPO" || -z "$TOKEN" ]]; then
-  echo "Usage: $0 --repo <owner/name> --label <label> --token <runner-reg-token> [--service]"
+  echo "Usage: $0 --repo <owner/name> --label <label> --token <runner-reg-token> [--runners N] [--service]"
+  echo ""
+  echo "  --runners N   Number of self-hosted runner instances to register on this"
+  echo "                machine (default 1 — one job at a time). This is the"
+  echo "                concurrency cap: GitHub runs one job per runner, so at most N"
+  echo "                agent jobs run at once and extras queue until a runner frees."
+  echo "                Keep it low to leave machine resources for other repos."
   echo ""
   echo "Get runner token: https://github.com/<owner>/<name>/settings/actions/runners/new"
   exit 1
 fi
 
+if ! [[ "$RUNNERS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: --runners must be a positive integer (got: $RUNNERS)"
+  exit 1
+fi
+
 REPO_URL="https://github.com/$REPO"
-RUNNER_DIR="$HOME/actions-runner-${REPO//\//-}"
 
 echo "==> Setting up adlc runner for $REPO (label: $LABEL)"
 
@@ -59,10 +72,7 @@ if ! command -v claude &>/dev/null; then
   }
 fi
 
-# ── Download GH Actions runner ───────────────────────────────────────────────
-mkdir -p "$RUNNER_DIR"
-cd "$RUNNER_DIR"
-
+# ── Download GH Actions runner (cached once, extracted per instance) ──────────
 ARCH="$(uname -m)"
 case "$ARCH" in
   x86_64)  RUNNER_ARCH="x64" ;;
@@ -71,47 +81,59 @@ case "$ARCH" in
 esac
 
 TARBALL="actions-runner-linux-${RUNNER_ARCH}-${RUNNER_VERSION}.tar.gz"
-if [[ ! -f ".runner" ]]; then
-  if [[ ! -f "$TARBALL" ]]; then
-    echo "==> Downloading runner v${RUNNER_VERSION}..."
-    curl -sSfL \
-      "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${TARBALL}" \
-      -o "$TARBALL"
-    tar xzf "$TARBALL"
-  fi
-
-  # Register
-  HOSTNAME="$(hostname -s)"
-  ./config.sh \
-    --url "$REPO_URL" \
-    --token "$TOKEN" \
-    --name "${HOSTNAME}-${LABEL//,/-}" \
-    --labels "self-hosted,linux,${LABEL}" \
-    --work "_work" \
-    --unattended \
-    --replace
-
-  echo "==> Runner registered."
-else
-  echo "==> Runner already configured (delete $RUNNER_DIR/.runner to re-register)."
+CACHE_DIR="$HOME/.cache/adlc-runner"
+mkdir -p "$CACHE_DIR"
+if [[ ! -f "$CACHE_DIR/$TARBALL" ]]; then
+  echo "==> Downloading runner v${RUNNER_VERSION}..."
+  curl -sSfL \
+    "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${TARBALL}" \
+    -o "$CACHE_DIR/$TARBALL"
 fi
 
-# ── Install as user-level systemd service ───────────────────────────────────
-if $INSTALL_SERVICE; then
-  SERVICE_NAME="agentic-runner-${REPO//\//-}"
-  SERVICE_FILE="$HOME/.config/systemd/user/${SERVICE_NAME}.service"
-  mkdir -p "$HOME/.config/systemd/user"
+HOSTNAME="$(hostname -s)"
 
-  cat > "$SERVICE_FILE" << EOF
+# ── Register N runner instances ──────────────────────────────────────────────
+# Instance count == machine concurrency cap. GitHub dispatches one job per
+# runner and holds the rest in its job queue, so no more than $RUNNERS agent
+# jobs ever run at once and no labeled issue is dropped. Each instance gets its
+# own directory + _work checkout, so concurrent jobs never share git state.
+echo "==> Registering $RUNNERS runner instance(s) (max $RUNNERS concurrent agent jobs)"
+for i in $(seq 1 "$RUNNERS"); do
+  INSTANCE_DIR="$HOME/actions-runner-${REPO//\//-}-${i}"
+  INSTANCE_NAME="${HOSTNAME}-${LABEL//,/-}-${i}"
+  mkdir -p "$INSTANCE_DIR"
+
+  if [[ -f "$INSTANCE_DIR/.runner" ]]; then
+    echo "==> Runner #$i already configured ($INSTANCE_DIR) — skipping (delete .runner to re-register)."
+  else
+    tar xzf "$CACHE_DIR/$TARBALL" -C "$INSTANCE_DIR"
+    ( cd "$INSTANCE_DIR" && ./config.sh \
+        --url "$REPO_URL" \
+        --token "$TOKEN" \
+        --name "$INSTANCE_NAME" \
+        --labels "self-hosted,linux,${LABEL}" \
+        --work "_work" \
+        --unattended \
+        --replace )
+    echo "==> Runner #$i registered as $INSTANCE_NAME."
+  fi
+
+  # ── Install as user-level systemd service ─────────────────────────────────
+  if $INSTALL_SERVICE; then
+    SERVICE_NAME="agentic-runner-${REPO//\//-}-${i}"
+    SERVICE_FILE="$HOME/.config/systemd/user/${SERVICE_NAME}.service"
+    mkdir -p "$HOME/.config/systemd/user"
+
+    cat > "$SERVICE_FILE" << EOF
 [Unit]
-Description=GitHub Actions Runner for $REPO ($LABEL)
+Description=GitHub Actions Runner for $REPO ($LABEL) #$i
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=$RUNNER_DIR
-ExecStart=$RUNNER_DIR/run.sh
+WorkingDirectory=$INSTANCE_DIR
+ExecStart=$INSTANCE_DIR/run.sh
 Restart=always
 RestartSec=10
 KillMode=process
@@ -120,16 +142,18 @@ KillMode=process
 WantedBy=default.target
 EOF
 
-  systemctl --user daemon-reload
-  systemctl --user enable "$SERVICE_NAME"
-  systemctl --user start  "$SERVICE_NAME"
+    systemctl --user daemon-reload
+    systemctl --user enable "$SERVICE_NAME"
+    systemctl --user start  "$SERVICE_NAME"
+    echo "==> Service installed: $SERVICE_NAME"
+  fi
+done
 
-  # Allow service to run after user logout
+if $INSTALL_SERVICE; then
+  # Allow services to keep running after the user logs out
   loginctl enable-linger "$USER" 2>/dev/null || \
     echo "WARN: loginctl enable-linger failed (may need sudo). Run: sudo loginctl enable-linger $USER"
-
-  echo "==> Service installed: $SERVICE_NAME"
-  echo "    Manage with: systemctl --user {status,stop,start,restart} $SERVICE_NAME"
+  echo "    Manage with: systemctl --user {status,stop,start,restart} agentic-runner-${REPO//\//-}-<1..$RUNNERS>"
 fi
 
 # ── Drop dispatcher workflow into caller repo ─────────────────────────────────

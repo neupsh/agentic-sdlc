@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Writes the shared identity/conventions/build header to /tmp/agent-prompt.txt (overwrites).
-# Reads env vars: ISSUE_NUMBER, ISSUE_TYPE, BRANCH, AGENT_EMAIL,
+# Writes the shared identity/conventions/build header to $PROMPT_FILE (overwrites).
+# Reads env vars: PROMPT_FILE, ISSUE_NUMBER, ISSUE_TYPE, BRANCH, AGENT_EMAIL,
 #                 CONVENTIONS, BUILD_CHECK, BUILD_TEST
+# PROMPT_FILE is per-runner (RUNNER_TEMP) so concurrent jobs don't clobber it;
+# falls back to /tmp for standalone/local use.
 
 set -euo pipefail
 
-OUT=/tmp/agent-prompt.txt
+OUT="${PROMPT_FILE:-/tmp/agent-prompt.txt}"
 
 cat > "$OUT" << EOF
 You are an autonomous agent working on GitHub issue #${ISSUE_NUMBER} in the repository at the current working directory.

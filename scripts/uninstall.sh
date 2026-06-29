@@ -23,40 +23,56 @@ if [[ -z "$REPO" ]]; then
   exit 1
 fi
 
-RUNNER_DIR="$HOME/actions-runner-${REPO//\//-}"
-SERVICE_NAME="agentic-runner-${REPO//\//-}"
+# install.sh registers one or more instances suffixed -1..-N. Discover them all
+# by glob (plus any legacy un-suffixed install from older script versions) so we
+# never orphan a runner. The numeric-suffix glob avoids matching a sibling repo
+# whose name merely starts with this one.
+PREFIX_DIR="$HOME/actions-runner-${REPO//\//-}"
+PREFIX_SVC="agentic-runner-${REPO//\//-}"
+SVC_DIR="$HOME/.config/systemd/user"
 
-# ── Stop and remove systemd service ─────────────────────────────────────────
-SERVICE_FILE="$HOME/.config/systemd/user/${SERVICE_NAME}.service"
-if systemctl --user is-active "$SERVICE_NAME" &>/dev/null; then
-  systemctl --user stop "$SERVICE_NAME"
-  echo "==> Stopped $SERVICE_NAME"
-fi
-if systemctl --user is-enabled "$SERVICE_NAME" &>/dev/null; then
-  systemctl --user disable "$SERVICE_NAME"
-fi
-if [[ -f "$SERVICE_FILE" ]]; then
-  rm "$SERVICE_FILE"
-  systemctl --user daemon-reload
-  echo "==> Removed service file"
+shopt -s nullglob
+
+RUNNER_DIRS=( "$PREFIX_DIR"-[0-9]* )
+[[ -d "$PREFIX_DIR" ]] && RUNNER_DIRS+=( "$PREFIX_DIR" )          # legacy
+
+SERVICE_FILES=( "$SVC_DIR/$PREFIX_SVC"-[0-9]*.service )
+[[ -f "$SVC_DIR/$PREFIX_SVC.service" ]] && SERVICE_FILES+=( "$SVC_DIR/$PREFIX_SVC.service" )  # legacy
+
+if [[ ${#RUNNER_DIRS[@]} -eq 0 && ${#SERVICE_FILES[@]} -eq 0 ]]; then
+  echo "==> Nothing to remove for $REPO (no runner directories or services found)."
 fi
 
-# ── Deregister runner ────────────────────────────────────────────────────────
-if [[ -d "$RUNNER_DIR" ]]; then
-  cd "$RUNNER_DIR"
-  if [[ -f ".runner" ]]; then
+# ── Stop and remove systemd services ─────────────────────────────────────────
+for SERVICE_FILE in "${SERVICE_FILES[@]}"; do
+  SERVICE_NAME="$(basename "$SERVICE_FILE" .service)"
+  if systemctl --user is-active "$SERVICE_NAME" &>/dev/null; then
+    systemctl --user stop "$SERVICE_NAME"
+    echo "==> Stopped $SERVICE_NAME"
+  fi
+  if systemctl --user is-enabled "$SERVICE_NAME" &>/dev/null; then
+    systemctl --user disable "$SERVICE_NAME"
+  fi
+  rm -f "$SERVICE_FILE"
+  echo "==> Removed service file: $SERVICE_NAME"
+done
+[[ ${#SERVICE_FILES[@]} -gt 0 ]] && systemctl --user daemon-reload
+
+# ── Deregister runners ───────────────────────────────────────────────────────
+for RUNNER_DIR in "${RUNNER_DIRS[@]}"; do
+  [[ -d "$RUNNER_DIR" ]] || continue
+  if [[ -f "$RUNNER_DIR/.runner" ]]; then
     if [[ -n "$TOKEN" ]]; then
-      ./config.sh remove --token "$TOKEN" --unattended 2>/dev/null || true
-      echo "==> Runner deregistered from GitHub"
+      ( cd "$RUNNER_DIR" && ./config.sh remove --token "$TOKEN" --unattended 2>/dev/null || true )
+      echo "==> Runner deregistered from GitHub: $(basename "$RUNNER_DIR")"
     else
-      echo "WARN: No token provided — runner not deregistered from GitHub."
+      echo "WARN: No token provided — $(basename "$RUNNER_DIR") not deregistered from GitHub."
       echo "      Remove it manually at: https://github.com/$REPO/settings/actions/runners"
     fi
   fi
-  cd "$HOME"
   rm -rf "$RUNNER_DIR"
   echo "==> Removed runner directory: $RUNNER_DIR"
-fi
+done
 
 echo ""
 echo "==> Uninstall complete for $REPO."

@@ -27,7 +27,10 @@ Issue labeled "agent-ready"
 git clone https://github.com/neupsh/adlc
 cd adlc
 
-# Register + install as a persistent user-level systemd service
+# Register + install as a persistent user-level systemd service.
+# Defaults to 1 runner (one job at a time). Add e.g. --runners 2 to allow more
+# concurrency — but each runner is a concurrent agent job, so leave headroom if
+# other repos share this machine.
 ./scripts/install.sh \
   --repo your-org/your-repo \
   --label linux \
@@ -36,6 +39,26 @@ cd adlc
 ```
 
 For IBKR-dependent tests, use `--label ibkr` and run on the machine with IB Gateway.
+
+### Concurrency & isolation
+
+`--runners N` is the concurrency cap for this repo on the machine: GitHub dispatches
+**one job per runner instance** and queues the rest, so no more than `N` agent jobs
+ever run at once and **no labeled issue is dropped** — extras wait for a free runner.
+It defaults to `1` (one job at a time). Bump it only if the box has spare capacity;
+each extra runner is another concurrent agent process competing for CPU/RAM, and if
+other repos register their own runners here, total machine load is the sum across all
+of them.
+
+Concurrent jobs never collide on disk — this holds across repos too, since two repos'
+runners on one machine can fire jobs at the same time:
+
+- Each runner instance has its own directory and `_work` checkout.
+- Each job runs the agent in a **per-issue git worktree** under `RUNNER_TEMP`
+  (`agent/issue-<n>` branch), created at job start and removed at the end.
+- The generated prompt and run log also live under `RUNNER_TEMP`, which is unique
+  per runner and wiped each job — so two jobs on the same box can't clobber them.
+- A per-issue `concurrency` group ensures the same issue never runs twice at once.
 
 ### 2. Drop the dispatcher workflow into your repo
 
@@ -119,14 +142,16 @@ esac
 
 ## Runner management
 
+Services are named `agentic-runner-<org>-<repo>-<N>`, one per instance:
+
 ```bash
-# Check status
-systemctl --user status adlc-runner-your-org-your-repo
+# Check status of all instances for a repo
+systemctl --user list-units 'agentic-runner-your-org-your-repo-*'
 
-# Restart
-systemctl --user restart adlc-runner-your-org-your-repo
+# Restart instance #2
+systemctl --user restart agentic-runner-your-org-your-repo-2
 
-# Uninstall
+# Uninstall — auto-discovers and removes every instance (and any legacy install)
 ./scripts/uninstall.sh --repo your-org/your-repo --token <REMOVE_TOKEN>
 # Remove token: https://github.com/<owner>/<repo>/settings/actions/runners
 ```

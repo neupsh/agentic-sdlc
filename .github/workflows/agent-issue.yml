@@ -46,6 +46,11 @@ on:
 jobs:
   run-agent:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    # Per-issue mutual exclusion: the same issue never runs twice at once.
+    # Machine-wide concurrency (how many issues run in parallel) is capped by
+    # the number of self-hosted runner instances registered on the box — see
+    # install.sh --runners. GitHub queues jobs when all runners are busy, so
+    # excess tickets wait rather than being dropped.
     concurrency:
       group: agent-issue-${{ inputs.issue_number }}
       cancel-in-progress: false
@@ -55,7 +60,13 @@ jobs:
       ISSUE_NUMBER: ${{ inputs.issue_number }}
       ISSUE_TITLE: ${{ inputs.issue_title }}
       BRANCH: agent/issue-${{ inputs.issue_number }}
-      WORKTREE: /tmp/agent-worktrees/${{ inputs.issue_number }}
+      # Everything transient lives under RUNNER_TEMP, which is unique per runner
+      # instance and wiped each job. With several runners sharing one machine,
+      # this guarantees the worktree, prompt file, and run log of concurrent
+      # jobs can never collide on shared /tmp.
+      WORKTREE: ${{ runner.temp }}/agent-worktrees/${{ inputs.issue_number }}
+      PROMPT_FILE: ${{ runner.temp }}/agent-prompt.txt
+      RUN_LOG: ${{ runner.temp }}/agent-run.log
       REPO: ${{ github.repository }}
       MODEL: ${{ inputs.model }}
 
@@ -99,10 +110,14 @@ jobs:
 
       - name: Create worktree
         run: |
-          mkdir -p /tmp/agent-worktrees
-          if git worktree list | grep -q "$WORKTREE"; then
-            git worktree remove "$WORKTREE" --force
-          fi
+          # Fully idempotent so a same-issue re-run (after a crash/cancel) on a
+          # runner that still holds stale worktree metadata or the local branch
+          # starts clean. RUNNER_TEMP is wiped between jobs but the persistent
+          # _work checkout keeps .git/worktrees/* and the agent/issue-<n> branch.
+          mkdir -p "$(dirname "$WORKTREE")"
+          git worktree remove "$WORKTREE" --force 2>/dev/null || true
+          git worktree prune
+          git branch -D "$BRANCH" 2>/dev/null || true
           git worktree add "$WORKTREE" -b "$BRANCH" HEAD
 
       - name: Resolve issue type and model
@@ -177,10 +192,10 @@ jobs:
           GPG_TTY: /dev/tty
         working-directory: ${{ env.WORKTREE }}
         run: |
-          claude -p "$(cat /tmp/agent-prompt.txt)" \
+          claude -p "$(cat "$PROMPT_FILE")" \
             --model "$MODEL" \
             --dangerously-skip-permissions \
-            2>&1 | tee /tmp/agent-run-$ISSUE_NUMBER.log
+            2>&1 | tee "$RUN_LOG"
 
       - name: Post result to issue
         if: always()
@@ -211,7 +226,7 @@ jobs:
             gh issue edit "$ISSUE_NUMBER" \
               --remove-label "agent-coding" --add-label "agent-failed" \
               --repo "$REPO" 2>/dev/null || true
-            TAIL=$(tail -30 /tmp/agent-run-$ISSUE_NUMBER.log 2>/dev/null || echo "no log")
+            TAIL=$(tail -30 "$RUN_LOG" 2>/dev/null || echo "no log")
             gh issue comment "$ISSUE_NUMBER" \
               --body "Agent Coder failed -- no PR opened. Last output: $TAIL" \
               --repo "$REPO"

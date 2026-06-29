@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Appends the initiative task section to /tmp/agent-prompt.txt.
-# Reads env vars: ISSUE_NUMBER, ISSUE_TITLE, REPO, ISSUE_BODY
+# Appends the initiative task section to $PROMPT_FILE.
+# Reads env vars: PROMPT_FILE, ISSUE_NUMBER, ISSUE_TITLE, REPO, ISSUE_BODY
 
 set -euo pipefail
 
-OUT=/tmp/agent-prompt.txt
+OUT="${PROMPT_FILE:-/tmp/agent-prompt.txt}"
 
 cat >> "$OUT" << EOF
 
