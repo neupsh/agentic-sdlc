@@ -8,21 +8,15 @@ on:
 jobs:
   p:
     runs-on: ubuntu-latest
-    env:
-      REPO: ${{ github.repository }}
-      PR: ${{ inputs.pr_number }}
     steps:
-      - name: Detect
-        id: appdetect
-        env:
-          APP_ID: ${{ secrets.ADLC_APP_ID }}
-        run: |
-          if [ -n "$APP_ID" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
       - name: Mint
         id: apptoken
-        if: steps.appdetect.outputs.present == 'true'
+        if: steps.never.outputs.x == 'true'
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.ADLC_APP_ID }}
           private-key: ${{ secrets.ADLC_APP_PRIVATE_KEY }}
-      - run: echo "reached body (no token-use expr)"
+      - name: Use token output alone (no secrets fallback)
+        env:
+          GH_TOKEN: ${{ steps.apptoken.outputs.token }}
+        run: echo "len=${#GH_TOKEN}"
