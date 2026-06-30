@@ -18,6 +18,14 @@ Issue labeled "agent-ready"
 
 ## Quick start (new project)
 
+**Prerequisites**
+
+- A Linux machine to host the self-hosted runner (kept on; `--service` enables lingering so it survives logout).
+- A GitHub repo you can add Actions secrets and a self-hosted runner to.
+- A GPG key for signed commits — the agent signs every commit. Create one with `gpg --full-generate-key`; get its ID via `gpg --list-secret-keys --keyid-format=long`.
+- A Claude subscription (the agent runs the `claude` CLI, not the metered API).
+- `git` and Node.js on the runner box. `install.sh` installs Claude Code, `gh`, and `jq` where it can.
+
 ### 1. Register a runner on your machine
 
 ```bash
@@ -87,7 +95,32 @@ Settings → Secrets and variables → Actions:
 
 ### 4. Create issue labels
 
-In your repo's Issues, create: `agent-ready`, `agent-coding`, `agent-review`, `agent-failed`
+Two groups: **lifecycle** labels (required — the workflow moves issues through them) and
+**taxonomy** labels (optional — they pick the prompt and model). Create all of them
+(run inside your repo clone, or add `--repo your-org/your-repo` to each):
+
+```bash
+gh label create agent-ready     -c 0075ca -d "Ready for agentic pickup"
+gh label create agent-coding    -c e4e669 -d "Agent is actively coding"
+gh label create agent-review    -c d93f0b -d "Agent PR is in review"
+gh label create agent-failed    -c b60205 -d "Agent run failed"
+gh label create type:initiative -c 0075ca -d "Decompose into epics (architect, no code)"
+gh label create type:epic       -c 7057ff -d "Spec + break into stories (architect, no code)"
+gh label create type:story      -c d4c5f9 -d "Implement the change + open a PR (default)"
+gh label create type:bug        -c d73a4a -d "Diagnose + minimal fix + regression test"
+gh label create model:opus      -c e4e669 -d "Force Opus for this issue"
+gh label create model:sonnet    -c cfd3d7 -d "Force Sonnet for this issue"
+```
+
+**How the taxonomy routes a run** (resolved at job start from the issue's labels):
+
+| Label | What the agent does | Model |
+|-------|---------------------|-------|
+| _(no `type:` label)_ → `type:story` | Implement the change, open a PR | `model` input (default `claude-sonnet-4-6`) |
+| `type:bug` | Diagnose → minimal fix + regression test → PR | same default |
+| `type:epic` | Architect mode: write a spec, open `type:story` issues. No code | `claude-opus-4-8` |
+| `type:initiative` | Architect mode: propose an ordered list of epics. No code | `claude-opus-4-8` |
+| `model:opus` / `model:sonnet` | (any type) override the model for this issue | per label |
 
 ### 5. Authenticate Claude (once per machine)
 
@@ -97,7 +130,10 @@ claude auth login   # uses your subscription, not API pricing
 
 ### 6. Trigger an agent run
 
-Label any issue `agent-ready`. The agent fires within seconds.
+Label any issue `agent-ready`. The agent fires within seconds. Add a `type:` label
+to route it (default is `type:story`); add `model:opus`/`model:sonnet` to override the
+model. The issue moves `agent-ready` → `agent-coding` → `agent-review` (PR opened) or
+`agent-failed`.
 
 ---
 
