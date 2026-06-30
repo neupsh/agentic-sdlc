@@ -129,6 +129,12 @@ jobs:
           # Fail loudly HERE (not mid-agent-run) if signing is misconfigured.
           echo "adlc signing check" | "$GNUPGHOME/gpg-sign.sh" --clearsign > /dev/null
 
+      - name: Record agent provenance on commits
+        env:
+          AGENT_MODEL: ${{ inputs.model }}
+          AGENT_EFFORT: ${{ inputs.effort }}
+        run: bash .adlc/scripts/setup-commit-trailers.sh
+
       - name: Resolve PR branch + gather review feedback
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -172,9 +178,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "$MODE" = review ]; then
-            MSG="Agent is reviewing this PR (\`$PR_BRANCH\`) — reviewer: \`${{ inputs.reviewer_model }}\`, up to ${{ inputs.review_rounds }} round(s)"
+            MSG="Agent is reviewing this PR (\`$PR_BRANCH\`) — reviewer: \`${{ inputs.reviewer_model }}\` · effort \`${{ inputs.reviewer_effort }}\`, up to ${{ inputs.review_rounds }} round(s)"
           else
-            MSG="Agent Coder is addressing review feedback on \`$PR_BRANCH\` — model: \`$MODEL\`"
+            MSG="Agent Coder is addressing review feedback on \`$PR_BRANCH\` — model: \`$MODEL\` · effort \`${{ inputs.effort }}\`"
           fi
           gh pr comment "$PR_NUMBER" --repo "$REPO" \
             --body "$MSG — $(date -u '+%Y-%m-%d %H:%M UTC')" || true
