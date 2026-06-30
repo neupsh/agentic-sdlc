@@ -231,6 +231,14 @@ jobs:
             gh issue comment "$ISSUE_NUMBER" \
               --body "Agent Coder finished · model: \`$MODEL\` — PR: $PR_URL" \
               --repo "$REPO"
+            # Carry opt-in auto-merge from the issue onto the PR so an approving
+            # review can merge it (see agent-automerge.yml). Default stays manual.
+            if echo "$CURRENT_LABELS" | grep -qw "auto-merge"; then
+              PR_NUM=$(gh pr list --head "$BRANCH" --json number -q '.[0].number' \
+                --repo "$REPO" 2>/dev/null || echo "")
+              [ -n "$PR_NUM" ] && gh pr edit "$PR_NUM" --add-label "auto-merge" \
+                --repo "$REPO" 2>/dev/null || true
+            fi
           elif echo "$CURRENT_LABELS" | grep -q "agent-review" || [ "$ISSUE_STATE" = "CLOSED" ]; then
             # Agent determined no change needed (self-labeled agent-review or closed the issue directly)
             if [ "$ISSUE_STATE" != "CLOSED" ]; then

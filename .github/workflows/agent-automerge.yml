@@ -1,0 +1,66 @@
+name: Agent Auto-merge (Reusable)
+
+# Called by a project's agent-dispatch.yml on: pull_request_review (approved).
+# OPT-IN: only merges PRs that carry the auto-merge label. The human-review gate
+# is the default — unlabeled PRs are never auto-merged, they wait at agent-review.
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      auto_merge_label:
+        description: Label that opts a PR into auto-merge
+        required: false
+        type: string
+        default: "auto-merge"
+      merge_method:
+        description: "squash | merge | rebase"
+        required: false
+        type: string
+        default: "squash"
+
+jobs:
+  auto-merge:
+    # Lightweight gh-only job — no agent, no self-hosted runner needed.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Merge if opted-in and approved
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr_number }}
+          LABEL: ${{ inputs.auto_merge_label }}
+          METHOD: ${{ inputs.merge_method }}
+        run: |
+          set -euo pipefail
+
+          case "$METHOD" in
+            squash|merge|rebase) ;;
+            *) echo "invalid merge_method '$METHOD' (want squash|merge|rebase)"; exit 1 ;;
+          esac
+
+          # Idempotent: approvals can arrive more than once, and a PR may already
+          # be merged/closed by the time this runs.
+          STATE=$(gh pr view "$PR" --repo "$REPO" --json state -q .state)
+          if [ "$STATE" != "OPEN" ]; then
+            echo "PR #$PR is $STATE — nothing to do."
+            exit 0
+          fi
+
+          # Opt-in gate: only merge PRs that explicitly carry the label.
+          if ! gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name' | grep -Fqx "$LABEL"; then
+            echo "PR #$PR not labeled '$LABEL' — leaving it for manual review."
+            exit 0
+          fi
+
+          # The review-approved event is the gate (the caller's if: enforces it).
+          # No branch protection on free private repos, so merge directly.
+          echo "PR #$PR approved and labeled '$LABEL' — merging (--$METHOD)."
+          gh pr merge "$PR" --repo "$REPO" --"$METHOD" --delete-branch
+          gh pr comment "$PR" --repo "$REPO" \
+            --body "Auto-merged after approval (opt-in label \`$LABEL\`)." || true

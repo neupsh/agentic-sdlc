@@ -45,10 +45,12 @@ name: Agentic Issue Dispatch
 on:
   issues:
     types: [labeled]
+  pull_request_review:
+    types: [submitted]
 
 jobs:
   dispatch:
-    if: github.event.label.name == 'agent-ready'
+    if: github.event_name == 'issues' && github.event.label.name == 'agent-ready'
     permissions:
       contents: write
       issues: write
@@ -62,6 +64,16 @@ jobs:
       # build_check_cmd: "cargo check"
       # build_test_cmd:  "cargo test"
     secrets: inherit
+
+  # Opt-in: merges an approved PR only if it carries the 'auto-merge' label.
+  auto-merge:
+    if: github.event_name == 'pull_request_review' && github.event.review.state == 'approved'
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: neupsh/adlc/.github/workflows/agent-automerge.yml@${SDLC_REF}
+    with:
+      pr_number: \${{ github.event.pull_request.number }}
 EOF
 
 echo "Created: $OUT"
