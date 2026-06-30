@@ -54,7 +54,8 @@ for r in $(seq 1 "$ROUNDS"); do
   # so non-blocking nits and rationale are visible without digging in the run log.
   if [ -s "$REVIEW_FILE" ]; then
     CFILE="$RUNNER_TEMP/review-comment.md"
-    { printf '🤖 **AI review** — round %s/%s (`%s`)\n\n' "$r" "$ROUNDS" "$REVIEWER_MODEL"
+    { printf '🤖 **AI review** — round %s/%s (model `%s` · effort `%s`)\n\n' \
+        "$r" "$ROUNDS" "$REVIEWER_MODEL" "$REVIEWER_EFFORT"
       cat "$REVIEW_FILE"; } > "$CFILE"
     gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$CFILE" || true
   fi
