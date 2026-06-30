@@ -110,6 +110,7 @@ gh label create type:story      -c d4c5f9 -d "Implement the change + open a PR (
 gh label create type:bug        -c d73a4a -d "Diagnose + minimal fix + regression test"
 gh label create model:opus      -c e4e669 -d "Force Opus for this issue"
 gh label create model:sonnet    -c cfd3d7 -d "Force Sonnet for this issue"
+gh label create auto-merge      -c 0e8a16 -d "Merge the PR automatically once a review approves it"
 ```
 
 **How the taxonomy routes a run** (resolved at job start from the issue's labels):
@@ -134,6 +135,27 @@ Label any issue `agent-ready`. The agent fires within seconds. Add a `type:` lab
 to route it (default is `type:story`); add `model:opus`/`model:sonnet` to override the
 model. The issue moves `agent-ready` → `agent-coding` → `agent-review` (PR opened) or
 `agent-failed`.
+
+---
+
+## Auto-merge (opt-in)
+
+By default every PR stops at `agent-review` and waits for a human — that gate is the
+safe default and stays the default. To let a specific PR finish the loop on its own,
+opt it in with the **`auto-merge`** label:
+
+- Add `auto-merge` to the **issue** (alongside `agent-ready`) and it's copied onto the
+  PR when the agent opens it. To opt in *after* the PR exists, add `auto-merge` directly
+  to the **PR**.
+- When someone **approves** the PR, it merges automatically (squash, branch deleted).
+  Unlabeled PRs are never touched.
+
+The merge runs on a GitHub-hosted runner — no agent or self-hosted runner involved.
+
+> **Note:** the approval must come from a human (or a token that isn't the default
+> `GITHUB_TOKEN`). GitHub does not re-trigger workflows for events authored by
+> `GITHUB_TOKEN`, so a future reviewer-agent that approves with the built-in token
+> won't trip auto-merge — it would need a PAT or GitHub App token.
 
 ---
 
