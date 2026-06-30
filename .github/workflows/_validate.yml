@@ -3,11 +3,8 @@ on:
   push:
     branches: [fix/job-env-secret-startup]
 jobs:
-  v-issue:
-    uses: ./.github/workflows/agent-issue.yml
+  v-automerge:
+    uses: ./.github/workflows/agent-automerge.yml
     with:
-      issue_number: "0"
-      issue_title: "validate"
-      runner_labels: '["self-hosted","__adlc_validate_no_runner__"]'
-      review_rounds: "0"
+      pr_number: "0"
     secrets: inherit
