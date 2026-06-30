@@ -28,14 +28,48 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      issues: write          # close linked issues after merge (GITHUB_TOKEN path)
+    env:
+      # Default auth token. "Resolve auth token" overrides it (via $GITHUB_ENV) only
+      # when a GitHub App is configured; the no-app path keeps using GITHUB_TOKEN.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR: ${{ inputs.pr_number }}
+      LABEL: ${{ inputs.auto_merge_label }}
+      METHOD: ${{ inputs.merge_method }}
     steps:
-      - name: Merge if opted-in and approved
+      # Optional branded bot identity — see agent-issue.yml for the full rationale.
+      # With an App, the merge/comments/close are attributed to YOUR app and
+      # GitHub's native linked-issue close may fire too; the explicit close below
+      # is kept (state-guarded) so behavior is identical with or without the app.
+      - name: Detect GitHub App credentials
+        id: appdetect
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          PR: ${{ inputs.pr_number }}
-          LABEL: ${{ inputs.auto_merge_label }}
-          METHOD: ${{ inputs.merge_method }}
+          APP_ID: ${{ secrets.ADLC_APP_ID }}
+        run: |
+          if [ -n "$APP_ID" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mint GitHub App token
+        id: apptoken
+        if: steps.appdetect.outputs.present == 'true'
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.ADLC_APP_ID }}
+          private-key: ${{ secrets.ADLC_APP_PRIVATE_KEY }}
+
+      - name: Resolve auth token
+        if: steps.appdetect.outputs.present == 'true'
+        env:
+          APP_TOKEN: ${{ steps.apptoken.outputs.token }}
+        run: |
+          printf 'GH_TOKEN=%s\n' "$APP_TOKEN" >> "$GITHUB_ENV"
+          echo "adlc: using GitHub App token (${{ steps.apptoken.outputs.app-slug }}[bot])"
+
+      - name: Merge if opted-in and approved
         run: |
           set -euo pipefail
 
@@ -70,9 +104,16 @@ jobs:
           gh pr merge "$PR" --repo "$REPO" --"$METHOD" --delete-branch
           gh pr comment "$PR" --repo "$REPO" \
             --body "**🔀 Auto-merge** merged this PR after approval (opt-in label \`$LABEL\`). <sub>— adlc</sub>" || true
-          # GITHUB_TOKEN merges don't trigger GitHub's auto-close — close them ourselves.
+          # GITHUB_TOKEN merges don't trigger GitHub's native auto-close, so close
+          # them ourselves — but only if still OPEN, so we never double-comment when
+          # an App-token merge already triggered the native close.
           for iss in $CLOSES; do
-            echo "closing issue #$iss (resolved by PR #$PR)"
-            gh issue close "$iss" --repo "$REPO" --reason completed \
-              --comment "**✅ Resolved** by merged PR #$PR. <sub>— adlc</sub>" || true
+            ISTATE=$(gh issue view "$iss" --repo "$REPO" --json state -q .state 2>/dev/null || echo "")
+            if [ "$ISTATE" = "OPEN" ]; then
+              echo "closing issue #$iss (resolved by PR #$PR)"
+              gh issue close "$iss" --repo "$REPO" --reason completed \
+                --comment "**✅ Resolved** by merged PR #$PR. <sub>— adlc</sub>" || true
+            else
+              echo "issue #$iss already $ISTATE — skipping close."
+            fi
           done

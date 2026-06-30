@@ -106,11 +106,18 @@ if $approved; then
     if gh pr merge "$PR_NUMBER" --repo "$REPO" --"$METHOD" --delete-branch; then
       gh pr comment "$PR_NUMBER" --repo "$REPO" \
         --body "**🔍 Reviewer** approved and auto-merged (opt-in label \`$LABEL\`). <sub>— adlc</sub>" || true
-      # GITHUB_TOKEN merges don't trigger GitHub's auto-close — close them ourselves.
+      # GITHUB_TOKEN merges don't trigger GitHub's native auto-close, so close them
+      # ourselves — but only if still OPEN, so we never double-comment when an
+      # App-token merge already triggered the native close.
       for iss in $CLOSES; do
-        echo "review-loop: closing issue #$iss (resolved by PR #$PR_NUMBER)"
-        gh issue close "$iss" --repo "$REPO" --reason completed \
-          --comment "**✅ Resolved** by merged PR #$PR_NUMBER. <sub>— adlc</sub>" || true
+        ISTATE=$(gh issue view "$iss" --repo "$REPO" --json state -q .state 2>/dev/null || echo "")
+        if [ "$ISTATE" = "OPEN" ]; then
+          echo "review-loop: closing issue #$iss (resolved by PR #$PR_NUMBER)"
+          gh issue close "$iss" --repo "$REPO" --reason completed \
+            --comment "**✅ Resolved** by merged PR #$PR_NUMBER. <sub>— adlc</sub>" || true
+        else
+          echo "review-loop: issue #$iss already ${ISTATE:-unknown} — skipping close."
+        fi
       done
     else
       gh pr comment "$PR_NUMBER" --repo "$REPO" \

@@ -70,8 +70,10 @@ jobs:
   # On an existing PR (collaborators only): a "Request changes" review or a '/fix'
   # comment -> the agent fixes it in place; a '/review' comment -> the agent runs the
   # AI review->fix loop on it.
+  # The user.type != 'Bot' guards stop an agent's own review/comments from looping
+  # back: with a GitHub App configured, bot-authored events DO trigger workflows.
   revise:
-    if: (github.event_name == 'pull_request_review' && github.event.review.state == 'changes_requested') || (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && (contains(github.event.comment.body, '/fix') || contains(github.event.comment.body, '/review')) && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    if: (github.event_name == 'pull_request_review' && github.event.review.state == 'changes_requested' && github.event.review.user.type != 'Bot') || (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && github.event.comment.user.type != 'Bot' && (contains(github.event.comment.body, '/fix') || contains(github.event.comment.body, '/review')) && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     permissions:
       contents: write
       issues: write
@@ -86,13 +88,15 @@ jobs:
 
   # Opt-in: merges an approved PR only if it carries the 'auto-merge' label.
   auto-merge:
-    if: github.event_name == 'pull_request_review' && github.event.review.state == 'approved'
+    if: github.event_name == 'pull_request_review' && github.event.review.state == 'approved' && github.event.review.user.type != 'Bot'
     permissions:
       contents: write
       pull-requests: write
+      issues: write
     uses: neupsh/adlc/.github/workflows/agent-automerge.yml@${SDLC_REF}
     with:
       pr_number: \${{ github.event.pull_request.number }}
+    secrets: inherit
 EOF
 
 echo "Created: $OUT"
@@ -101,6 +105,8 @@ echo "Next steps:"
 echo "  1. Commit and push $OUT to your repo"
 echo "  2. Ensure these GitHub secrets exist in your repo:"
 echo "       GPG_PRIVATE_KEY, GPG_KEY_ID, GPG_PASSPHRASE"
+echo "     (Optional, for a branded bot identity instead of github-actions[bot]:"
+echo "       ADLC_APP_ID, ADLC_APP_PRIVATE_KEY — see README 'Branded bot identity')"
 echo "  3. Ensure these labels exist in your repo's Issues:"
 echo "       agent-ready, agent-coding, agent-review, agent-failed"
 echo "  4. (Optional) Add .adlc/conventions.md for project-specific rules"

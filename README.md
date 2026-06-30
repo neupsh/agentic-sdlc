@@ -93,6 +93,13 @@ Settings → Secrets and variables → Actions:
 | `GPG_KEY_ID` | Your signing key ID |
 | `GPG_PASSPHRASE` | GPG passphrase |
 
+Optional — add these two for a [branded bot identity](#branded-bot-identity-optional-github-app) (agent actions show as **your app** instead of `github-actions[bot]`):
+
+| Secret | Value |
+|--------|-------|
+| `ADLC_APP_ID` | Your GitHub App's numeric App ID |
+| `ADLC_APP_PRIVATE_KEY` | The app's full `.pem` private key (BEGIN/END lines included) |
+
 ### 4. Create issue labels
 
 Two groups: **lifecycle** labels (required — the workflow moves issues through them) and
@@ -193,7 +200,80 @@ merge runs on a GitHub-hosted runner via the `pull_request_review` event.
 > **Note:** a human **`/fix`** comment or review fires the agent because those events
 > are human-authored. GitHub does **not** re-trigger workflows for `GITHUB_TOKEN`-authored
 > events, which is exactly why the AI review→fix→merge loop runs inline (one job) rather
-> than as separate event-triggered workflows.
+> than as separate event-triggered workflows. (With the optional
+> [GitHub App](#branded-bot-identity-optional-github-app), agent-authored events *do*
+> trigger workflows — the dispatcher's `user.type != 'Bot'` guards keep that from looping.)
+
+---
+
+## Branded bot identity (optional GitHub App)
+
+By default every agent action — commits' *push*, the PR, comments, merges, issue
+closes — is performed with the built-in `GITHUB_TOKEN` and shows up as
+**`github-actions[bot]`**. Commits themselves still show your verified `Agent Coder`
+GPG identity; only the *actor* on pushes/PRs/comments/merges is the bot.
+
+To rebrand that actor as **your own app** (custom name + avatar), register a GitHub
+App and add two secrets. It's **free**, **opt-in**, and **falls back cleanly**: with no
+app secrets present, everything behaves exactly as before. As a bonus, an App token
+isn't subject to `GITHUB_TOKEN`'s anti-recursion rule, so GitHub's **native
+linked-issue auto-close** on merge starts working too (the manual close stays as a
+guarded backstop).
+
+> **Cost & privacy:** GitHub Apps are free with higher API rate limits than tokens.
+> The app's private key can mint tokens for **every repo it's installed on**, so scope
+> the install to specific repos and keep permissions minimal. No webhook is needed —
+> the app is only used to mint a short-lived, repo-scoped token at job start.
+
+### Set it up (once)
+
+1. **Register the app** — GitHub → Settings → Developer settings → **GitHub Apps** →
+   **New GitHub App**. (Use your **org's** developer settings if you want org-level
+   secrets later — see multi-repo below.)
+   - **Name:** whatever you want the bot to be called (e.g. `myproj-agent`). This is
+     what shows on comments as `myproj-agent[bot]`.
+   - **Homepage URL:** anything (your repo URL is fine).
+   - **Webhook:** **uncheck “Active”** — not needed.
+   - **Repository permissions:**
+     - **Contents:** Read and write *(push, merge, delete branch)*
+     - **Pull requests:** Read and write *(create, comment, merge)*
+     - **Issues:** Read and write *(comment, close, label)*
+     - **Metadata:** Read-only *(mandatory, auto-selected)*
+   - Leave everything else untouched → **Create GitHub App**.
+2. **Grab the App ID** — on the app's page, copy the numeric **App ID**.
+3. **Generate a private key** — same page → **Private keys** → **Generate a private
+   key**. A `.pem` downloads. This is `ADLC_APP_PRIVATE_KEY` (the whole file, including
+   the `-----BEGIN…`/`-----END…` lines).
+4. **Install the app** — app page → **Install App** → install it on the account/org
+   that owns your repos → choose **Only select repositories** and pick the ones using
+   adlc. *(Registering ≠ installing — the app does nothing until installed.)*
+5. **Add the secrets** — in each repo (or once at org level), add:
+   - `ADLC_APP_ID` = the numeric App ID
+   - `ADLC_APP_PRIVATE_KEY` = the full `.pem` contents
+6. **Refresh the dispatcher** — regenerate it so the bot-recursion guards land
+   (re-run `install-dispatcher.sh`, or pull the two `user.type != 'Bot'` conditions and
+   `secrets: inherit` on the `auto-merge` job into your existing `agent-dispatch.yml`).
+   This matters **only with the app on**: app-authored events *can* trigger workflows,
+   and the guards stop the inline reviewer's own comments from looping back. Without the
+   app, the old dispatcher is unaffected.
+
+That's it — the next agent run uses the app. Remove the two secrets to instantly revert
+to `github-actions[bot]`.
+
+### Multiple repos on a free account
+
+One app covers many repos — you do **not** register one per repo:
+
+- **Register one app**, install it on **all** the repos you want (step 4, select them).
+- **Personal account:** there's no shared secret store, so add the **same two secrets**
+  (`ADLC_APP_ID`, `ADLC_APP_PRIVATE_KEY`) to **each** repo. Same values everywhere.
+- **Many repos? Use a free org.** Create a (free) GitHub Organization, register the app
+  under the **org's** developer settings, then set the two values once as
+  **organization secrets** (Org → Settings → Secrets and variables → Actions) scoped to
+  the repos that need them. Every repo inherits them — set once, not N times.
+
+The minted token is always scoped to just the repo the run is in, so one shared app
+across many repos stays least-privilege per run.
 
 ---
 
