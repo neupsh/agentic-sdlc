@@ -1,12 +1,10 @@
 name: _validate (throwaway — delete before merge)
-
 on:
   push:
     branches: [fix/job-env-secret-startup]
-
 jobs:
-  v-automerge:
-    uses: ./.github/workflows/agent-automerge.yml
+  v-probe:
+    uses: ./.github/workflows/_probe.yml
     with:
       pr_number: "0"
     secrets: inherit
