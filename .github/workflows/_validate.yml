@@ -5,7 +5,8 @@ on:
     branches: [fix/job-env-secret-startup]
 
 jobs:
-  control:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "control job parsed and ran — _validate harness is OK"
+  v-automerge:
+    uses: ./.github/workflows/agent-automerge.yml
+    with:
+      pr_number: "0"
+    secrets: inherit
