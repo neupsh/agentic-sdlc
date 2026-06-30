@@ -78,11 +78,11 @@ jobs:
       MODEL: ${{ inputs.model }}
       MODE: ${{ inputs.mode }}
       # NB: GH_TOKEN is NOT set here — `secrets` is not available in job-level env:
-      # (GitHub rejects the workflow at startup). Each gh/git step sets its own.
+      # (GitHub rejects the workflow at startup). "Resolve auth token" sets it.
 
     steps:
       # Optional branded bot identity — see agent-issue.yml for the full rationale.
-      # Each gh/git step uses GH_TOKEN: ${{ steps.apptoken.outputs.token || secrets.GITHUB_TOKEN }}.
+      # "Resolve auth token" sets GH_TOKEN (app token else GITHUB_TOKEN) via $GITHUB_ENV.
       - name: Detect GitHub App credentials
         id: appdetect
         env:
@@ -105,6 +105,22 @@ jobs:
           app-id: ${{ secrets.ADLC_APP_ID }}
           private-key: ${{ secrets.ADLC_APP_PRIVATE_KEY }}
 
+      - name: Resolve auth token
+        # Sets GH_TOKEN (app token else GITHUB_TOKEN) via $GITHUB_ENV. Each value is
+        # its own single-context expression — a steps+secrets mix in one ${{ }} is a
+        # startup_failure actionlint won't catch. See agent-issue.yml.
+        env:
+          APP_TOKEN: ${{ steps.apptoken.outputs.token }}
+          DEFAULT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "$APP_TOKEN" ]; then
+            printf 'GH_TOKEN=%s\n' "$APP_TOKEN" >> "$GITHUB_ENV"
+            echo "adlc: using GitHub App token"
+          else
+            printf 'GH_TOKEN=%s\n' "$DEFAULT_TOKEN" >> "$GITHUB_ENV"
+            echo "adlc: using GITHUB_TOKEN (github-actions[bot])"
+          fi
+
       - name: Resolve per-runner temp paths
         run: |
           echo "WORKTREE=$RUNNER_TEMP/agent-worktrees/pr-$PR_NUMBER" >> "$GITHUB_ENV"
@@ -116,8 +132,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # App token when configured (so pushes are attributed to the app), else GITHUB_TOKEN.
-          token: ${{ steps.apptoken.outputs.token || secrets.GITHUB_TOKEN }}
+          # Resolved by "Resolve auth token": app token (pushes attributed to the app)
+          # when configured, else GITHUB_TOKEN.
+          token: ${{ env.GH_TOKEN }}
 
       - name: Checkout adlc scripts
         uses: actions/checkout@v4
@@ -163,8 +180,6 @@ jobs:
         run: bash .adlc/scripts/setup-commit-trailers.sh
 
       - name: Resolve PR branch + gather review feedback
-        env:
-          GH_TOKEN: ${{ steps.apptoken.outputs.token || secrets.GITHUB_TOKEN }}
         run: |
           PR_BRANCH=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefName -q .headRefName)
           echo "PR_BRANCH=$PR_BRANCH" >> "$GITHUB_ENV"
@@ -201,8 +216,6 @@ jobs:
           git worktree add -B "$PR_BRANCH" "$WORKTREE" "origin/$PR_BRANCH"
 
       - name: Note start
-        env:
-          GH_TOKEN: ${{ steps.apptoken.outputs.token || secrets.GITHUB_TOKEN }}
         run: |
           if [ "$MODE" = review ]; then
             MSG="**🔍 Reviewer** is reviewing this PR (\`$PR_BRANCH\`) — model \`${{ inputs.reviewer_model }}\` · effort \`${{ inputs.reviewer_effort }}\`, up to ${{ inputs.review_rounds }} round(s)"
@@ -227,7 +240,6 @@ jobs:
       - name: Run agent (revise)
         if: ${{ inputs.mode != 'review' }}
         env:
-          GH_TOKEN: ${{ steps.apptoken.outputs.token || secrets.GITHUB_TOKEN }}
           GPG_TTY: /dev/tty
           EFFORT: ${{ inputs.effort }}
         working-directory: ${{ env.WORKTREE }}
@@ -241,7 +253,6 @@ jobs:
       - name: AI review loop (on demand)
         if: ${{ inputs.mode == 'review' }}
         env:
-          GH_TOKEN: ${{ steps.apptoken.outputs.token || secrets.GITHUB_TOKEN }}
           GPG_TTY: /dev/tty
           REVIEW_ROUNDS: ${{ inputs.review_rounds }}
           REVIEWER_MODEL: ${{ inputs.reviewer_model }}
@@ -258,8 +269,6 @@ jobs:
 
       - name: Report failure
         if: failure()
-        env:
-          GH_TOKEN: ${{ steps.apptoken.outputs.token || secrets.GITHUB_TOKEN }}
         run: |
           TAIL=$(tail -30 "$RUN_LOG" 2>/dev/null || echo "no log")
           gh pr comment "$PR_NUMBER" --repo "$REPO" \

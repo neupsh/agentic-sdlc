@@ -62,9 +62,23 @@ jobs:
           app-id: ${{ secrets.ADLC_APP_ID }}
           private-key: ${{ secrets.ADLC_APP_PRIVATE_KEY }}
 
-      - name: Merge if opted-in and approved
+      - name: Resolve auth token
+        # Sets GH_TOKEN (app token else GITHUB_TOKEN) via $GITHUB_ENV. Each value is
+        # its own single-context expression — a steps+secrets mix in one ${{ }} is a
+        # startup_failure actionlint won't catch. See agent-issue.yml.
         env:
-          GH_TOKEN: ${{ steps.apptoken.outputs.token || secrets.GITHUB_TOKEN }}
+          APP_TOKEN: ${{ steps.apptoken.outputs.token }}
+          DEFAULT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "$APP_TOKEN" ]; then
+            printf 'GH_TOKEN=%s\n' "$APP_TOKEN" >> "$GITHUB_ENV"
+            echo "adlc: using GitHub App token"
+          else
+            printf 'GH_TOKEN=%s\n' "$DEFAULT_TOKEN" >> "$GITHUB_ENV"
+            echo "adlc: using GITHUB_TOKEN (github-actions[bot])"
+          fi
+
+      - name: Merge if opted-in and approved
         run: |
           set -euo pipefail
 
